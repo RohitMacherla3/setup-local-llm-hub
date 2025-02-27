@@ -13,6 +13,7 @@ setup-local-llm-hub/
 |___model_list.json          # List of models to download
 |___requirements.txt         # List of Python dependencies to download
 |___README.md                # This file
+|___ollama-server/           # Fast-Api and node js end-to-end application
 ```
 
 ## Getting Started
@@ -39,6 +40,10 @@ Note: Make sure to change the project directory to "setup-local-llm-hub/" in the
    - Interact with models: `python src/interact.py`
    - Select the model
    - Use `/bye` to exit the chat and `quit` or `exit` to exit from the interaction.
+
+Note: Install npm before running the next step.
+   - Install on mac using homebrew - `brew install node`
+   - Verify installation - `npm -v`
 
 6. To Use UI Interaction
    - Navigate to the directory - `cd ollama-server`

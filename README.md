@@ -4,7 +4,7 @@
 ## Project Structure
 
 ```
-ollama-project/
+setup-local-llm-hub/
 |___src/
 │   |__install.py            # Script to install Ollama
 │   |__download_models.py    # Script to download models
@@ -17,7 +17,7 @@ ollama-project/
 
 ## Getting Started
 
-Note: Make sure to change to the project directory "ollama-project/" in the above case before running the following commands.
+Note: Make sure to change to the project directory "setup-local-llm-hub/" in the above case before running the following commands.
 
 1. Make sure you have Python 3.6+ installed (requirements.txt uses Python 3.12)
    - Create Virtual Environment - `conda create -p .venv python=3.12 -y`

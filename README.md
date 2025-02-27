@@ -40,8 +40,15 @@ Note: Make sure to change the project directory to "setup-local-llm-hub/" in the
    - Select the model
    - Use `/bye` to exit the chat and `quit` or `exit` to exit from the interaction.
 
-6. Start Conversing with the model
-   - Use the API client: `python src/api_client.py`
+6. To Use UI Interaction
+   - Navigate to the directory - `cd ollama-server`
+   - Start the Backend in terminal 1 - `python ollama_server.py`
+   - Navigate to frontend directory - `cd frontend`
+   - Start the Frontend in terminal 2- `npm start`
+   - You should be able to see the UI at "http://localhost:3000/"
+
+## UI
+![alt text](image.png)
 
 ## Available Models
 

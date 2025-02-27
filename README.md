@@ -64,3 +64,6 @@ By default, this project is configured to download:
 ## Additional Information
 For more information about Ollama, visit https://ollama.com/
 Github for Ollama - https://github.com/ollama/ollama
+
+## Next Steps:
+- Make a generic react UI to select and interact with the model using web sockets.

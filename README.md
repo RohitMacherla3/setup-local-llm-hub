@@ -13,6 +13,7 @@ setup-local-llm-hub/
 |___model_list.json          # List of models to download
 |___requirements.txt         # List of Python dependencies to download
 |___README.md                # This file
+|___ollama-server/           # Fast-Api and node js end-to-end application
 ```
 
 ## Getting Started
@@ -40,8 +41,19 @@ Note: Make sure to change the project directory to "setup-local-llm-hub/" in the
    - Select the model
    - Use `/bye` to exit the chat and `quit` or `exit` to exit from the interaction.
 
-6. Start Conversing with the model
-   - Use the API client: `python src/api_client.py`
+Note: Install npm before running the next step.
+   - Install on mac using homebrew - `brew install node`
+   - Verify installation - `npm -v`
+
+6. To Use UI Interaction
+   - Navigate to the directory - `cd ollama-server`
+   - Start the Backend in terminal 1 - `python ollama_server.py`
+   - Navigate to frontend directory - `cd frontend`
+   - Start the Frontend in terminal 2- `npm start`
+   - You should be able to see the UI at "http://localhost:3000/"
+
+## Sample UI
+![alt text](image.png)
 
 ## Available Models
 
@@ -64,6 +76,3 @@ By default, this project is configured to download:
 ## Additional Information
 For more information about Ollama, visit https://ollama.com/
 Github for Ollama - https://github.com/ollama/ollama
-
-## Next Steps:
-- Implement a generic react UI to select and interact with the model using web sockets.

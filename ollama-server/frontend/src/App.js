@@ -41,6 +41,8 @@ function App() {
   const [isStreaming, setIsStreaming] = useState(false);
   const [currentResponse, setCurrentResponse] = useState('');
   const [initialConnectionMade, setInitialConnectionMade] = useState(false);
+  const [chatHistories, setChatHistories] = useState([]);
+  const [showHistoryModal, setShowHistoryModal] = useState(false);
   
   const socketRef = useRef(null);
   const messagesEndRef = useRef(null);
@@ -63,6 +65,26 @@ function App() {
           {children}
         </code>
       );
+    }
+  };
+  const loadChatHistory = (historyId) => {
+    if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+      socketRef.current.send(JSON.stringify({
+        type: 'load_history',
+        history_id: historyId
+      }));
+      setShowHistoryModal(false);
+    }
+  };
+  
+  // Add a function to fetch chat histories
+  const fetchChatHistories = async () => {
+    try {
+      const response = await fetch(`http://localhost:8000/api/chat_histories?model=${selectedModel}`);
+      const data = await response.json();
+      setChatHistories(data.histories);
+    } catch (error) {
+      console.error('Error fetching chat histories:', error);
     }
   };
 
@@ -125,6 +147,18 @@ function App() {
       socket.onopen = () => {
         console.log(`Connected to ${selectedModel} WebSocket`);
         setIsConnected(true);
+
+        if (!initialConnectionMade) {
+          setMessages(prev => [
+            ...prev,
+            { 
+              type: 'assistant', 
+              content: `Hello there! I am ${getDisplayName(selectedModel)}. How can I assist you today?`,
+              model: selectedModel 
+            }
+          ]);
+          setInitialConnectionMade(true);
+        }
       };
       
       socket.onmessage = (event) => {
@@ -140,22 +174,9 @@ function App() {
           } 
           else if (data.type === 'stream_end') {
             setIsStreaming(false);
-            
-            // Add the assistant's response to messages
-            if (currentResponse) {
-              setMessages(prev => [
-                ...prev, 
-                { 
-                  type: 'assistant', 
-                  content: currentResponse, 
-                  model: selectedModel 
-                }
-              ]);
-            }
           } 
           else if (data.type === 'error') {
             setIsStreaming(false);
-            // Optionally handle error
             setMessages(prev => [
               ...prev,
               { 
@@ -164,10 +185,14 @@ function App() {
               }
             ]);
           }
+          else if (data.type === 'chat_histories') {
+            // Store available chat histories
+            setChatHistories(data.histories);
+          }
         } catch (error) {
           console.error('Error parsing WebSocket message:', error);
         }
-      };
+      };   
       
       socket.onclose = () => {
         console.log(`Disconnected from ${selectedModel} WebSocket`);
@@ -221,7 +246,7 @@ function App() {
   return (
     <div className="app-container">
       <div className="sidebar">
-      <h2>Ollama Assistants</h2>
+        <h2>Ollama Assistants</h2>
         <div className="model-selector">
           <label htmlFor="model-select">SELECT MODEL:</label>
           <select 

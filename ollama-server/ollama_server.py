@@ -1,105 +1,43 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-import uvicorn
-import subprocess
+"""Module to start the Ollama server with continuous chat history"""
 import asyncio
 import json
-from typing import List, Dict, Any
+from typing import List, Dict
 from pydantic import BaseModel
-import logging
-import uuid
-import tiktoken
+import uvicorn
+import aiohttp
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from log import setup_colored_logging
+from chat_manager import ModelHistoryManager
 
-# Set up logging
-logging.basicConfig(level=logging.INFO, 
-                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+# Set up the logger for this file
+logger = setup_colored_logging("ollama_server")
 
 app = FastAPI(title="Ollama Chat API")
 
 # Configure CORS for frontend access
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Restrict this in production
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # Models for request/response
-class Message(BaseModel):
-    role: str
-    content: str
-
-class ChatSession:
-    def __init__(self, model_name: str, max_tokens: int = 4096):
-        self.id = str(uuid.uuid4())
-        self.model_name = model_name
-        self.messages: List[Message] = []
-        self.max_tokens = max_tokens
-        self.tokenizer = tiktoken.get_encoding("cl100k_base")  # Use OpenAI's tokenizer as a standard
-
-    def add_message(self, role: str, content: str):
-        self.messages.append(Message(role=role, content=content))
-        self._trim_context()
-
-    def _trim_context(self):
-        """Trim context to stay within token limit"""
-        while self._calculate_tokens() > self.max_tokens:
-            # Remove the oldest message, keeping system/initial context
-            if len(self.messages) > 1:
-                self.messages.pop(0)
-            else:
-                break
-
-    def _calculate_tokens(self) -> int:
-        """Calculate total tokens in the conversation"""
-        return sum(
-            len(self.tokenizer.encode(msg.content)) 
-            for msg in self.messages
-        )
-
-    def get_context(self) -> List[Dict[str, str]]:
-        """Get the current conversation context"""
-        return [
-            {"role": msg.role, "content": msg.content} 
-            for msg in self.messages
-        ]
-
-
-class SessionManager:
-    def __init__(self):
-        # Nested dictionary to store sessions per model and connection
-        self.sessions: Dict[str, Dict[str, ChatSession]] = {}
-
-    def create_or_get_session(self, model_name: str, connection_id: str) -> ChatSession:
-        # Create model-specific session container if not exists
-        if model_name not in self.sessions:
-            self.sessions[model_name] = {}
-        
-        # Create or retrieve session for this connection
-        if connection_id not in self.sessions[model_name]:
-            self.sessions[model_name][connection_id] = ChatSession(model_name)
-        
-        return self.sessions[model_name][connection_id]
-
-    def remove_session(self, model_name: str, connection_id: str):
-        if (model_name in self.sessions and 
-            connection_id in self.sessions[model_name]):
-            del self.sessions[model_name][connection_id]
-
-# Initialize session manager
-session_manager = SessionManager()
-
 class ModelRequest(BaseModel):
+    """Model request for chat API"""
     name: str
     prompt: str
+
+# Initialize the history manager
+history_manager = ModelHistoryManager()
 
 # Store active WebSocket connections
 active_connections: Dict[str, List[WebSocket]] = {}
 
-# Check if Ollama is running
 async def is_ollama_running():
+    """Check if Ollama is running"""
     try:
         process = await asyncio.create_subprocess_exec(
             "ollama", "list",
@@ -109,36 +47,36 @@ async def is_ollama_running():
         stdout, stderr = await process.communicate()
         return process.returncode == 0
     except Exception as e:
-        logger.error(f"Error checking Ollama status: {e}")
+        logger.error("Error checking Ollama status: %s", e)
         return False
 
-# Start Ollama if not running
 async def ensure_ollama_running():
+    """Ensure Ollama is running"""
     if not await is_ollama_running():
-        logger.info("Starting Ollama...")
+        logger.debug("Starting Ollama...")
         try:
             process = await asyncio.create_subprocess_exec(
                 "ollama", "serve",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
-            
+
             # Wait for Ollama to start (max 10 seconds)
             for _ in range(10):
                 await asyncio.sleep(1)
                 if await is_ollama_running():
                     logger.info("Ollama started successfully")
                     return True
-            
+
             logger.error("Failed to start Ollama after waiting")
             return False
         except Exception as e:
-            logger.error(f"Error starting Ollama: {e}")
+            logger.error("Error starting Ollama: %s", e)
             return False
     return True
 
-# Get installed models
 async def get_ollama_models():
+    """Get a list of installed Ollama models"""
     try:
         process = await asyncio.create_subprocess_exec(
             "ollama", "list",
@@ -146,15 +84,15 @@ async def get_ollama_models():
             stderr=asyncio.subprocess.PIPE
         )
         stdout, stderr = await process.communicate()
-        
+
         if process.returncode != 0:
-            logger.error(f"Error listing models: {stderr.decode()}")
+            logger.error("Error listing models: %s", stderr.decode())
             return []
-        
+
         # Parse output to get model names
         models = []
         lines = stdout.decode().strip().split('\n')
-        
+
         # Skip header line
         for line in lines[1:]:
             if line.strip():
@@ -162,73 +100,106 @@ async def get_ollama_models():
                 if parts:
                     # Get model name
                     models.append(parts[0])
-        
+
         return models
     except Exception as e:
-        logger.error(f"Error getting Ollama models: {e}")
+        logger.error("Error getting Ollama models: %s", e)
         return []
 
-# Modify the websocket_endpoint
 @app.websocket("/ws/{model_name}")
 async def websocket_endpoint(websocket: WebSocket, model_name: str):
+    """WebSocket endpoint for chat"""
     await websocket.accept()
-    
+
     # Create a unique connection ID
     connection_id = str(id(websocket))
-    
-    # Create or get session for this connection
-    session = session_manager.create_or_get_session(model_name, connection_id)
-    
-    # Check if Ollama is running (existing code)
+    logger.info("New WebSocket connection for model %s with ID %s", model_name, connection_id)
+
+    # Get the model history
+    model_history = history_manager.get_model_history(model_name)
+
+    # Check if Ollama is running
     if not await ensure_ollama_running():
         await websocket.send_text(json.dumps({
             "type": "system",
             "content": "Failed to start Ollama service"
         }))
+        logger.error("Failed to start Ollama service for connection %s", connection_id)
         await websocket.close()
         return
-    
+
+    # Send welcome message
+    await websocket.send_text(json.dumps({
+        "type": "welcome",
+        "model": model_name,
+        "modelDisplayName": model_name.split(":")[0].capitalize()
+    }))
+
+    # Get all previous messages and send to client
+    previous_messages = model_history.get_messages()
+
+    # Filter out system messages for display
+    display_messages = [msg for msg in previous_messages if msg["role"] != "system"]
+
+    if display_messages:
+        await websocket.send_text(json.dumps({
+            "type": "history_loaded",
+            "messages": display_messages
+        }))
+
     try:
         # Process messages
         while True:
             data = await websocket.receive_text()
             message_data = json.loads(data)
-            
+
             if message_data.get("type") == "message":
                 user_message = message_data.get("content", "")
-                
-                # Add user message to session context
-                session.add_message("user", user_message)
-                
+                logger.info("Received user message: %s...", user_message[:50])
+                # Add user message to chat history
+                model_history.add_message("user", user_message)
+
                 # Notify client that streaming is starting
                 await websocket.send_text(json.dumps({
                     "type": "stream_start"
                 }))
-                
+
                 # Process with Ollama, passing full context
                 await process_ollama_message(
-                    websocket, 
-                    model_name, 
-                    session.get_context()
+                    websocket,
+                    model_name,
+                    model_history,
+                    connection_id
                 )
-    
-    except WebSocketDisconnect:
-        logger.info(f"WebSocket disconnected for model: {model_name}")
-    finally:
-        # Remove the session
-        session_manager.remove_session(model_name, connection_id)
 
-async def process_ollama_message(
-    websocket: WebSocket, 
-    model_name: str, 
-    context: List[Dict[str, str]]
-):
+            elif message_data.get("type") == "clear_history":
+                # Clear the chat history for this model
+                model_history.clear_history()
+
+                # Notify client that history was cleared
+                await websocket.send_text(json.dumps({
+                    "type": "history_cleared"
+                }))
+
+    except WebSocketDisconnect:
+        logger.info("WebSocket disconnected for model %s and connection %s", model_name, connection_id)
+    finally:
+        # No need to explicitly save as it's saved after each message
+        pass
+
+async def process_ollama_message(websocket: WebSocket,
+                                model_name: str,
+                                model_history,
+                                connection_id: str):
+    """Process a message with Ollama and stream the response"""
     try:
-        import aiohttp
-        
+        # Get the current history context
+        context = model_history.get_messages()
+        logger.debug("Sending %d messages to Ollama", len(context))
+
         # Prepare the full context for Ollama
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
+        async with aiohttp.ClientSession() as http_session:
+            async with http_session.post(
                 "http://localhost:11434/api/chat",
                 json={
                     "model": model_name,
@@ -244,25 +215,26 @@ async def process_ollama_message(
                             if "message" in data:
                                 chunk = data["message"].get("content", "")
                                 full_response += chunk
-                                
+
                                 # Stream each chunk to the client
                                 await websocket.send_text(json.dumps({
                                     "type": "stream",
                                     "content": chunk
                                 }))
                         except Exception as e:
-                            logger.error(f"Error parsing line: {e}")
-                
+                            logger.error("Error parsing line: %s", e)
+
         # Signal end of stream
         await websocket.send_text(json.dumps({
             "type": "stream_end"
         }))
-        
-        # Add assistant's response to the session
-        # Note: This would be handled by the calling function in the websocket_endpoint
-        
+
+        # Add assistant's response to the chat history
+        logger.info("Adding assistant response: %s...", full_response[:50])
+        model_history.add_message("assistant", full_response)
+
     except Exception as e:
-        logger.error(f"Error processing Ollama message: {e}")
+        logger.error("Error processing Ollama message: %s", e)
         await websocket.send_text(json.dumps({
             "type": "error",
             "content": f"Error: {str(e)}"
@@ -274,70 +246,86 @@ async def process_ollama_message(
 # API Endpoints
 @app.get("/")
 async def root():
+    """Root endpoint"""
     return {"message": "Ollama Chat API is running"}
 
 @app.get("/api/models")
 async def get_models():
-    # Ensure Ollama is running
+    """Get available models endpoint"""
     if not await ensure_ollama_running():
         raise HTTPException(status_code=500, detail="Failed to start Ollama service")
-    
+
     # Get models
     models = await get_ollama_models()
     return {"models": models}
 
+@app.get("/api/chat_history/{model_name}")
+async def get_model_chat_history(model_name: str):
+    """Get chat history for a specific model"""
+    model_history = history_manager.get_model_history(model_name)
+    messages = model_history.get_messages()
+
+    # Filter out system messages for display
+    display_messages = [msg for msg in messages if msg["role"] != "system"]
+
+    return {
+        "model": model_name,
+        "messages": display_messages
+    }
+
+@app.post("/api/clear_history/{model_name}")
+async def clear_model_history(model_name: str):
+    """Clear chat history for a specific model"""
+    history_manager.clear_model_history(model_name)
+    return {"status": "success", "message": f"Cleared history for model {model_name}"}
+
 @app.post("/api/chat")
 async def chat(request: ModelRequest):
-    # For non-streaming API requests
-    # This is an alternative to WebSockets if you prefer REST
+    """Chat endpoint for non-WebSocket requests"""
     if not await ensure_ollama_running():
         raise HTTPException(status_code=500, detail="Failed to start Ollama service")
-    
+
     try:
-        process = await asyncio.create_subprocess_exec(
-            "ollama", "run", request.name,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
-        )
-        
-        # Send prompt to Ollama
-        process.stdin.write(f"{request.prompt}\n".encode())
-        await process.stdin.drain()
-        
-        # Read the response
-        full_response = ""
-        is_first_line = True
-        
-        while True:
-            line = await process.stdout.readline()
-            if not line:
-                break
-            
-            text = line.decode().strip()
-            
-            # Skip the first line (echo of the prompt)
-            if is_first_line:
-                is_first_line = False
-                continue
-            
-            full_response += text + "\n"
-        
-        # Terminate process
-        try:
-            process.terminate()
-            await process.wait()
-        except:
-            pass
-        
-        return {"response": full_response.strip()}
+        # Get model history
+        model_history = history_manager.get_model_history(request.name)
+
+        # Add user message
+        model_history.add_message("user", request.prompt)
+
+        # Get full context
+        context = model_history.get_messages()
+
+        # Make a request to Ollama API
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                "http://localhost:11434/api/chat",
+                json={
+                    "model": request.name,
+                    "messages": context,
+                    "stream": False
+                }
+            ) as response:
+                result = await response.json()
+
+                if "message" in result:
+                    assistant_response = result["message"].get("content", "")
+
+                    # Add assistant response to history
+                    model_history.add_message("assistant", assistant_response)
+
+                    return {"response": assistant_response}
+                else:
+                    raise HTTPException(status_code=500, detail="Invalid response from Ollama")
+
     except Exception as e:
-        logger.error(f"Error in chat endpoint: {e}")
+        logger.error("Error in chat endpoint: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 # Startup event to ensure Ollama is running
 @app.on_event("startup")
 async def startup_event():
+    """Startup event to ensure Ollama is running"""
+    logger.info("Server starting up")
     if not await ensure_ollama_running():
         logger.error("Failed to start Ollama service during startup")
 

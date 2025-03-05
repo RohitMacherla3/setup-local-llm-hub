@@ -23,7 +23,7 @@ Note: Make sure to change the project directory to "setup-local-llm-hub/" in the
 1. Make sure you have Python 3.6+ installed (requirements.txt uses Python 3.12)
    - Create Virtual Environment - `conda create -p .venv python=3.12 -y`
    - Activate the .venv
-   - pip install -r requirements.txt
+   - Install requirements - `pip install -r requirements.txt`
 
 2. Install Ollama on your system
    - Install Ollama: `python src/install.py`
@@ -32,6 +32,7 @@ Note: Make sure to change the project directory to "setup-local-llm-hub/" in the
 3. Download the desired model(s)
    - Download models: `python src/download_models.py`
    - Enter the number for the desired model.
+   - Note: For small computes like Mac M1 Air, download the Llama 3.2 inorder to avoid crashes.
 
 4. Check all the installed models
    - List installed models: `ollama list`
@@ -49,6 +50,7 @@ Note: Install npm before running the next step.
    - Navigate to the directory - `cd ollama-server`
    - Start the Backend in terminal 1 - `python ollama_server.py`
    - Navigate to frontend directory - `cd frontend`
+   - Install npm - `npm install`
    - Start the Frontend in terminal 2- `npm start`
    - You should be able to see the UI at "http://localhost:3000/"
 
